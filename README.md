@@ -1,214 +1,133 @@
+# Personalized learning platform — backend MVP
 
+A working FastAPI backend covering the first half of the pipeline we designed:
+**upload → parse & chunk → extract concepts (LLM) → index for RAG → answer
+questions → generate quizzes**.
 
-# Learning with Tony – PDFer
+Knowledge tracing, the recommendation/study-plan engine, and the Obsidian
+export weren't in scope for this pass — see "What's not built yet" below for
+how they'd plug into what's here.
 
-**An intelligent study companion that converts PDF documents into interactive quizzes.**
+## Quickstart
 
-Transform your lecture notes, textbooks, and research papers into engaging quizzes in seconds.
-
-</div>
-
----
-
-## 🎓 Features
-
-- **PDF to Quiz Generation** – Upload any PDF and automatically generate customizable quizzes
-- **Multiple Question Types** – Mix of multiple-choice, true/false, fill-in-the-blank, and short-answer questions
-- **Smart Content Extraction** – Client-side PDF parsing using PDF.js for fast, private processing
-- **Quiz History** – Save and revisit your generated quizzes anytime
-- **Customizable Questions** – Choose between 1-20 questions per quiz
-- **Instant Grading** – Get scored results with explanations for each answer
-- **Beautiful UI** – Modern, responsive design with smooth animations
-
----
-
-## 🚀 Quick Start
-
-### Prerequisites
-- **Node.js** (v16 or higher)
-- **npm** or **yarn**
-
-### Installation
-
-1. **Clone the repository:**
-   ```bash
-   git clone <repository-url>
-   cd pdf-to-ques
-   ```
-
-2. **Install dependencies:**
-   ```bash
-   npm install
-   ```
-
-3. **Run the development server:**
-   ```bash
-   npm run dev
-   ```
-
-4. **Open in your browser:**
-   Navigate to `http://localhost:3000`
-
----
-
-## 📦 Build & Deployment
-
-### Build for Production
 ```bash
-npm run build
+python -m venv venv && source venv/bin/activate   # or your usual env manager
+pip install -r requirements.txt
+
+cp .env.example .env
+# edit .env and add your GEMINI_API_KEY (optional — see "mock mode" below)
+
+uvicorn app.main:app --reload
+# API docs: http://127.0.0.1:8000/docs
 ```
 
-### Preview Production Build
+Or run the pipeline directly without the server, against the bundled sample
+lecture text:
+
 ```bash
-npm run preview
+python scripts/demo_pipeline.py
 ```
 
-The built files will be in the `dist/` directory, ready for deployment.
+In a second terminal, start the frontend:
 
----
+bash
+cd frontend
+npm install
+cp .env.local.example .env.local
+npm run dev
+# http://localhost:3000
 
-## 🏗️ Project Structure
 
-```
-├── components/              # React components
-│   ├── Header.tsx          # Navigation header
-│   ├── PDFDropzone.tsx     # File upload interface
-│   ├── LoadingState.tsx    # Loading animations
-│   ├── QuizCard.tsx        # Question display card
-│   ├── QuestionTypes.tsx   # Question type renderers
-│   ├── SavedQuizzes.tsx    # Quiz history view
-│
-├── services/               # Business logic
-│   ├── pdfService.ts       # PDF text extraction
-│   ├── quizService.ts      # Quiz generation algorithm
-│
-├── App.tsx                 # Main app component
-├── types.ts                # TypeScript type definitions
-├── index.tsx               # React entry point
-├── index.html              # HTML template
-├── vite.config.ts          # Vite configuration
-└── tsconfig.json           # TypeScript configuration
-```
+## Live mode vs. mock mode
 
----
+Every LLM-dependent step (concept extraction, quiz generation, RAG answers)
+goes through `app/llm_client.py`. If `GEMINI_API_KEY` is set, it calls the
+real Gemini API. If not, it falls back to rough offline heuristics —
+frequency-based term extraction instead of real concept extraction, template
+questions instead of generated ones, "closest matching excerpt" instead of a
+synthesized answer.
 
-## 🔧 Technology Stack
+Mock mode exists so the plumbing (parsing, chunking, DB, retrieval, routing)
+is testable with zero setup. **It is not a substitute for the real thing —
+add your API key for actual concept/quiz quality.**
 
-- **Frontend Framework** – React 19 with TypeScript
-- **Build Tool** – Vite 6
-- **Styling** – Tailwind CSS
-- **Icons** – Lucide React
-- **PDF Processing** – PDF.js (CDN)
-- **State Management** – React Hooks & localStorage
-- **Font** – Playfair Display & DM Sans (Google Fonts)
+## Endpoints
 
----
+| Method | Path | Purpose |
+|---|---|---|
+| POST | `/documents/upload` | Upload a PDF / PPTX / txt / md file. Parses, chunks, extracts concepts, and indexes it for RAG in one call. |
+| GET | `/documents/{id}` | Document status (`processing` / `ready` / `failed`). |
+| GET | `/documents/{id}/concepts` | Concepts extracted from the document. |
+| POST | `/chat/ask` | Ask a question; answered via RAG over that document's chunks. |
+| POST | `/quiz/concepts/{concept_id}/generate?n=3` | Generate quiz questions for one concept. |
+| POST | `/quiz/submit` | Submit an answer; graded and logged as a `QuizAttempt`. |
 
-## 📝 How It Works
+### Uploading PDFs
 
-### 1. **Upload PDF**
-   Drag and drop your PDF or click to select. Choose your desired number of questions (1-20).
+Upload a text-based PDF from the Student dashboard. The API saves it, extracts
+text page by page, chunks it, extracts concepts, builds the retrieval index,
+and then makes it available for chat and quiz generation. Scanned/image-only
+PDFs need OCR before upload; the API reports that clearly rather than creating
+an empty document.
 
-### 2. **Extract Text**
-   The app uses [PDF.js](services/pdfService.ts) to extract text from up to 15 pages of your PDF locally.
+## Architecture notes / deliberate MVP shortcuts
 
-### 3. **Generate Quiz**
-   The [quiz generation algorithm](services/quizService.ts) analyzes the text and creates:
-   - **Multiple-choice questions** (40% of quiz)
-   - **Fill-in-the-blank** (20%)
-   - **True/False** (20%)
-   - **Short-answer** (20%)
+- **Retrieval uses TF-IDF, not embeddings.** `app/vectorstore.py` is a small
+  in-memory, lexical-overlap search — no external embedding API or model
+  download required, so it runs anywhere. Swap in `sentence-transformers`,
+  Voyage AI, or OpenAI embeddings plus a real vector DB (pgvector, Pinecone,
+  Weaviate, Chroma) for semantic retrieval quality.
+- **The vector index is in-memory** (`_STORES` dict in `app/services/rag.py`),
+  keyed by document id. Fine for an MVP; doesn't survive a restart. Persist
+  it alongside the embeddings in production.
+- **Run a single API worker for this MVP.** With multiple Uvicorn workers,
+  each process maintains its own in-memory retrieval cache and rebuilds it
+  independently. Use a persistent vector store before horizontal scaling.
+- **Short-answer grading is a loose string-containment check**
+  (`app/services/quiz.py`). Replace with an LLM-as-grader call for real
+  semantic grading.
+- **No auth / multi-tenancy.** Every quiz attempt defaults to
+  `student_id="demo-student"`. Add real user accounts before this goes near
+  real students.
 
-### 4. **Take & Grade**
-   Answer all questions, submit, and get instant feedback with explanations.
+## What's not built yet (and where it hooks in)
 
-### 5. **Save & Review**
-   All quizzes are saved to your browser's localStorage for future reference.
+- **Knowledge tracing (BKT/DKT):** `QuizAttempt` already logs
+  `(concept, correct/incorrect, timestamp)` for every submission — that's
+  the exact input a Bayesian or Deep Knowledge Tracing model needs. Build
+  it as a service that reads from that table and outputs a per-concept
+  mastery score.
+- **Recommendation / study plan engine:** would consume the mastery scores
+  above plus `Concept.prerequisites` to sequence what to review next.
+- **Obsidian vault export:** would read the `Concept` table (name,
+  definition, prerequisites) and render each row as a markdown note with
+  `[[wikilinks]]` for prerequisite relationships — the data model already
+  has everything needed, it's a rendering step away.
 
----
+## Project layout
 
-## 💾 Data Storage
-
-- **Quiz History** – Stored in `localStorage` with key `tony_quiz_history`
-- **Preferences** – Question count preference saved as `tony_pref_count`
-- **Privacy** – All processing happens client-side; no data is sent to external servers
-
----
-
-## 🎨 Customization
-
-### Change Color Scheme
-Edit the color classes in components (e.g., `bg-[#3B82F6]`) or modify Tailwind config.
-
-### Adjust Question Generation
-Modify the algorithm in [services/quizService.ts](services/quizService.ts):
-- Change `maxPagesToRead` to process more PDF pages
-- Adjust `STOPWORDS` to filter different terms
-- Modify question type distribution in the `typeRoll` logic
-
-### Update UI Text
-All user-facing text is in component files – search and replace as needed.
-
----
-
-## 📱 Browser Support
-
-- Chrome/Chromium (latest)
-- Firefox (latest)
-- Safari (latest)
-- Edge (latest)
-
-Requires ES2022 support and modern DOM APIs.
-
----
-
-## ⚙️ Development
-
-### Format & Lint
-```bash
-# Install prettier (optional)
-npm install --save-dev prettier
-
-# Format files
-npx prettier --write .
-```
-
-### Type Checking
-TypeScript is configured to run in strict mode. All files are checked at build time.
-
----
-
-## 📄 License
-
-This project is provided as-is for educational purposes.
-
----
-
-## 💡 Future Enhancements
-
-- [ ] AI-powered answer evaluation
-- [ ] Export quizzes as PDF
-- [ ] Collaborative quiz sharing
-- [ ] Dark mode
-- [ ] Mobile app version
-- [ ] Integration with learning platforms
-
----
-
-## 🐛 Troubleshooting
-
-**"PDF.js library not loaded"**
-- Ensure you're connected to the internet (CDN scripts are loaded)
-- Check browser console for CORS errors
-
-**"No questions generated"**
-- Try a text-heavy PDF with more content
-- Ensure PDF is scannable (not just images)
-
-**History not saving?**
-- Check if localStorage is enabled in your browser
-- Clear browser cache and try again
-
----
-
-**Made with ❤️ by Tony**
+app/
+  main.py              FastAPI app + router registration
+  config.py            Settings (API key, DB url, chunk size, etc.)
+  database.py           SQLAlchemy models: Document, Chunk, Concept, QuizQuestion, QuizAttempt
+  schemas.py            Pydantic request/response models
+  llm_client.py          Gemini wrapper (live + mock modes)
+  vectorstore.py         TF-IDF retrieval store
+  services/
+    ingestion.py          PDF/PPTX/text parsing + chunking
+    extraction.py          Concept extraction, de-duped per document
+    rag.py                 Index + answer questions over a document
+    quiz.py                Quiz generation + grading
+    analytics.py            Per-concept quiz accuracy aggregation (powers educator view)
+  routers/
+    documents.py, quiz.py, chat.py    HTTP endpoints
+scripts/
+  demo_pipeline.py        Runs the whole pipeline without the server
+sample_data/
+  sample_lecture.txt      Sample text to test against
+frontend/
+  app/                     Next.js pages: landing, /student, /educator
+  components/              UploadPanel, DocumentList, ConceptList, QuizPanel,
+                            ChatPanel, AnalyticsTable, ConceptMap
+  lib/                     api.ts (typed fetch client), types.ts
+  README.md                Frontend-specific setup and design notes

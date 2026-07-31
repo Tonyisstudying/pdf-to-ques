@@ -1,0 +1,27 @@
+Introduction to Neural Networks
+
+A Neural Network is a computing system loosely inspired by the structure of
+the human brain. It consists of layers of interconnected nodes, or Neurons,
+each of which applies a simple mathematical operation to its inputs and
+passes the result forward. Neural Networks are the foundation of modern
+Deep Learning.
+
+Every neuron computes a weighted sum of its inputs and passes that sum
+through an Activation Function, such as ReLU or Sigmoid. The Activation
+Function introduces non-linearity, which is what allows a network to learn
+complex patterns rather than just straight-line relationships. Without an
+Activation Function, stacking layers would be mathematically equivalent to
+a single linear layer.
+
+Training a neural network means adjusting its weights so that its
+predictions get closer to the correct answers. This is done using an
+algorithm called Backpropagation, which calculates how much each weight
+contributed to the error and adjusts it accordingly. Backpropagation relies
+on Gradient Descent, an optimization method that repeatedly nudges the
+weights in the direction that reduces the error the most.
+
+A Loss Function measures how wrong the network's predictions are. Common
+choices include Mean Squared Error for regression tasks and Cross Entropy
+for classification tasks. The goal of training is to minimize the Loss
+Function using Gradient Descent, one small step at a time, across many
+passes over the training data called Epochs.
